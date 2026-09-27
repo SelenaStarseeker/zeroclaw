@@ -735,6 +735,7 @@ mod payload_capture_tests {
 
     async fn next_llm_request(
         rx: &mut tokio::sync::broadcast::Receiver<serde_json::Value>,
+        trace_id: &str,
     ) -> serde_json::Value {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
@@ -746,7 +747,7 @@ mod payload_capture_tests {
                         .get("attributes")
                         .and_then(|a| a.get("trace_id"))
                         .and_then(|v| v.as_str())
-                        == Some("trace-req-test");
+                        == Some(trace_id);
                     if ours && value.get("message").and_then(|v| v.as_str()) == Some("llm_request")
                     {
                         return value;
@@ -800,10 +801,11 @@ mod payload_capture_tests {
         install_writer("redacted");
         while rx.try_recv().is_ok() {}
 
-        let ctx = test_ctx(&observer, &pacing);
+        let mut ctx = test_ctx(&observer, &pacing);
+        ctx.turn_id = "trace-payload-capture-test";
         let _ =
             announce_llm_request(&ctx, &history, None, &provider, "stub", "stub-model", 0).await;
-        let on_record = next_llm_request(&mut rx).await;
+        let on_record = next_llm_request(&mut rx, ctx.turn_id).await;
 
         let attrs = on_record
             .get("attributes")
@@ -840,10 +842,11 @@ mod payload_capture_tests {
         install_writer("off");
         while rx.try_recv().is_ok() {}
 
-        let ctx = test_ctx(&observer, &pacing);
+        let mut ctx = test_ctx(&observer, &pacing);
+        ctx.turn_id = "trace-payload-capture-test";
         let _ =
             announce_llm_request(&ctx, &history, None, &provider, "stub", "stub-model", 0).await;
-        let off_record = next_llm_request(&mut rx).await;
+        let off_record = next_llm_request(&mut rx, ctx.turn_id).await;
 
         let off_attrs = off_record
             .get("attributes")
@@ -1045,7 +1048,8 @@ mod payload_capture_tests {
         let tools = vec![test_tool_spec("alpha"), test_tool_spec("beta")];
         let expected = prefix_fingerprint(&history, Some(&tools));
 
-        let ctx = test_ctx(&observer, &pacing);
+        let mut ctx = test_ctx(&observer, &pacing);
+        ctx.turn_id = "trace-prefix-fingerprint-test";
         let _ = announce_llm_request(
             &ctx,
             &history,
@@ -1056,7 +1060,7 @@ mod payload_capture_tests {
             0,
         )
         .await;
-        let record = next_llm_request(&mut rx).await;
+        let record = next_llm_request(&mut rx, ctx.turn_id).await;
 
         let attrs = record
             .get("attributes")
