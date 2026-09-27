@@ -165,6 +165,15 @@ cli-auth-login-about = Login with OAuth (OpenAI Codex, Gemini, or xAI)
 cli-auth-refresh-about = Refresh OAuth access token using refresh token
 cli-auth-logout-about = Remove auth profile
 cli-auth-use-about = Set active profile for a provider
+cli-oidc-unknown-alias = No [oidc.{ $alias }] entry in the config. Configured entries: { $known }
+cli-oidc-device-visit = To sign in, visit { $uri } and enter code { $code }
+cli-oidc-device-waiting = Waiting for identity-provider approval (the code expires in { $seconds } seconds)...
+cli-oidc-device-expired = The device code expired before approval; run the command again.
+cli-oidc-enrolled = Enrolled with [oidc.{ $alias }]. The access token is on stdout; present it as auth_token in the RPC handshake or export it as ZEROCLAW_AUTH_TOKEN.
+cli-oidc-token-expiry = The token expires in { $seconds } seconds.
+cli-oidc-browser-open = Opening your browser to sign in. If nothing opens, visit:
+    { $uri }
+cli-oidc-browser-waiting = Waiting for the browser sign-in to complete...
 cli-auth-list-about = List auth profiles
 cli-auth-status-about = Show auth status with active profile and token expiry info
 
@@ -1036,6 +1045,7 @@ turn-model-fallback-notice = ⚡ { $requested_model } ({ $requested_provider }) 
 # Shown at the end of agent output when the tool call loop exhausted its
 # iteration budget and the agent cannot continue without exceeding limits.
 turn-max-iterations-reached = *Turn stopped: reached maximum tool iterations ({ $max_iterations }).*
+turn-execution-tree-budget-reached = *Turn stopped: exhausted the execution-tree iteration budget.*
 turn-context-window-exceeded-error = This request exceeds the selected model's context window. Reduce the request or enabled tools, or choose a model with a larger context window.
 # Breadcrumb injected into history where older turns were dropped to fit the
 # context budget; user-visible across channels, WS, RPC, ACP.
