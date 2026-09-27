@@ -80,7 +80,7 @@ pub(crate) async fn finish_after_max_iterations(
     multimodal_config: &MultimodalConfig,
     hooks: Option<&crate::hooks::HookRunner>,
     mut image_cache: Option<&mut zeroclaw_providers::multimodal::LocalImageCache>,
-    mut provider_image_state: Option<&mut super::ProviderImageState>,
+    provider_image_state: Option<&mut super::ProviderImageState>,
     context_limits_for_route: impl Fn(&str, &str) -> ResolvedContextLimits + Send + Sync,
     crumb_present: &mut bool,
     reported_usage: Option<super::ReportedRequestUsage>,
@@ -154,7 +154,6 @@ pub(crate) async fn finish_after_max_iterations(
     };
     let summary_image_route = super::ProviderImageState::route(provider_name, model);
     let quarantined_image_ids = provider_image_state
-        .as_deref_mut()
         .map(|state| state.quarantined(&summary_image_route))
         .unwrap_or_default();
     let summary_prompt = ChatMessage::user(format!(
