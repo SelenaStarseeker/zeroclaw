@@ -562,7 +562,8 @@ durable owner's plane), so the memory tools and per-turn recall inside a
 scoped session never touch the shared plane. There is no grant that opens
 the shared plane to a scoped session. Private writes pass the same content
 scanning and policy gates as shared writes, and private operations are
-audited with the full scope. On memory backends without principal support
+audited with the full scope when memory auditing is enabled. On memory
+backends without principal support
 (markdown, lucid, postgres, qdrant today) private memory fails closed with a
 clear denial rather than silently un-scoping, which for a scoped session
 means its memory tools refuse.
