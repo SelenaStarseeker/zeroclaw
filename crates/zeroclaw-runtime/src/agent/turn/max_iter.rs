@@ -152,10 +152,6 @@ pub(crate) async fn finish_after_max_iterations(
         ),
         None => (model_provider, provider_name, model, dispatch_model),
     };
-    let summary_image_route = super::ProviderImageState::route(provider_name, model);
-    let quarantined_image_ids = provider_image_state
-        .map(|state| state.quarantined(&summary_image_route))
-        .unwrap_or_default();
     let summary_prompt = ChatMessage::user(format!(
         "{exhaustion}. Please provide your best answer based on the work completed so far. \
          Summarize what you accomplished and what remains to be done."
@@ -186,11 +182,6 @@ pub(crate) async fn finish_after_max_iterations(
             )
             .await?
             .messages;
-            messages = super::suppress_quarantined_provider_images(
-                &messages,
-                &quarantined_image_ids,
-                false,
-            );
             messages.push(summary_prompt_mirror.clone());
             let pre_hook_messages = messages.clone();
             let mut selected_model = model.to_string();
@@ -218,6 +209,16 @@ pub(crate) async fn finish_after_max_iterations(
             } else {
                 Vec::new()
             };
+            let summary_image_route =
+                super::ProviderImageState::route(provider_name, &selected_model);
+            let quarantined_image_ids = provider_image_state
+                .map(|state| state.quarantined(&summary_image_route))
+                .unwrap_or_default();
+            messages = super::suppress_quarantined_provider_images(
+                &messages,
+                &quarantined_image_ids,
+                false,
+            );
             let tokens_before =
                 token_counter.count(crate::agent::history::estimate_history_tokens(&messages));
             let mut dropped_messages = 0;

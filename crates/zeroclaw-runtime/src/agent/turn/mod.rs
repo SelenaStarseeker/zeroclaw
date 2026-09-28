@@ -6385,6 +6385,7 @@ mod sop_step_reassembly_tests {
             cancellation_token,
             max_tool_iterations,
             None,
+            None,
         )
         .await
     }
@@ -6397,6 +6398,7 @@ mod sop_step_reassembly_tests {
         cancellation_token: CancellationToken,
         max_tool_iterations: usize,
         hooks: Option<&crate::hooks::HookRunner>,
+        image_cache: Option<ToolLoopImageState<'_>>,
     ) -> Result<String> {
         let observer = crate::observability::NoopObserver {};
         let multimodal = zeroclaw_config::schema::MultimodalConfig::default();
@@ -6460,7 +6462,7 @@ mod sop_step_reassembly_tests {
             event_tx: None,
             steering: None,
             new_messages_out: None,
-            image_cache: None,
+            image_cache,
             memory: None,
             ingress: IngressContext::sub_turn(),
             agent_alias: Some("budget-test"),
@@ -6473,7 +6475,7 @@ mod sop_step_reassembly_tests {
 
     #[tokio::test]
     async fn tree_budget_final_completion_prepares_images_and_honors_hooks() {
-        struct SummaryProbe(Arc<AtomicUsize>, &'static str);
+        struct SummaryProbe(Arc<AtomicUsize>, &'static str, bool);
         impl zeroclaw_api::attribution::Attributable for SummaryProbe {
             fn role(&self) -> zeroclaw_api::attribution::Role {
                 zeroclaw_api::attribution::Attributable::role(&TextProvider)
@@ -6508,11 +6510,13 @@ mod sop_step_reassembly_tests {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(model, self.1);
                 assert!(request.tools.is_none());
-                assert!(
+                assert_eq!(
                     request
                         .messages
                         .iter()
-                        .any(|m| m.content.contains("data:image/png;base64,"))
+                        .any(|m| m.content.contains("data:image/png;base64,")),
+                    self.2,
+                    "summary must apply quarantine for the hook-selected model"
                 );
                 assert!(request.messages.iter().any(|m| m.content == "hook-rewrite"));
                 Ok(ChatResponse {
@@ -6568,6 +6572,20 @@ mod sop_step_reassembly_tests {
         )
         .unwrap();
         let prompt = format!("describe [IMAGE:{}]", image.display());
+        let multimodal = zeroclaw_config::schema::MultimodalConfig::default();
+        let mut id_cache = zeroclaw_providers::multimodal::LocalImageCache::new();
+        let prepared = prepare_messages_for_iteration(
+            &[ChatMessage::user(prompt.clone())],
+            &multimodal,
+            false,
+            Some(&mut id_cache),
+        )
+        .await
+        .expect("summary image must prepare");
+        let image_id = zeroclaw_providers::multimodal::provider_image_ids(&prepared.messages)
+            .into_iter()
+            .next()
+            .expect("prepared summary request must contain an image");
         let tools = crate::tools::scoped::ScopedToolRegistry::from_raw_for_test(vec![]);
         for (cancel, change_model) in [(false, false), (false, true), (true, true)] {
             let calls = Arc::new(AtomicUsize::new(0));
@@ -6578,6 +6596,7 @@ mod sop_step_reassembly_tests {
                 } else {
                     "hint:budget-test"
                 },
+                !change_model,
             );
             let mut hooks = crate::hooks::HookRunner::new();
             hooks.register(Box::new(SummaryHook {
@@ -6586,6 +6605,17 @@ mod sop_step_reassembly_tests {
             }));
             let budget = ExecutionTreeBudget::root(1);
             let mut history = vec![ChatMessage::user(prompt.clone())];
+            let mut image_cache = zeroclaw_providers::multimodal::LocalImageCache::new();
+            let mut provider_image_state = ProviderImageState::default();
+            provider_image_state.record_recovery(
+                ProviderImageState::route("budget-test", "hook-selected-model"),
+                &[],
+                &[image_id],
+            );
+            let image_state = ToolLoopImageState {
+                cache: &mut image_cache,
+                provider_state: &mut provider_image_state,
+            };
             let result = run_budgeted_test_loop_with_hooks(
                 &provider,
                 &mut history,
@@ -6594,6 +6624,7 @@ mod sop_step_reassembly_tests {
                 CancellationToken::new(),
                 10,
                 Some(&hooks),
+                Some(image_state),
             )
             .await;
             assert_eq!(budget.remaining(), 0);
