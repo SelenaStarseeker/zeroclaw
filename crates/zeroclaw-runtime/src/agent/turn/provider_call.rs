@@ -476,6 +476,7 @@ pub(crate) async fn call_provider(
                                     Ok(response) if !response.is_semantically_empty_terminal() => {
                                         Ok(response)
                                     }
+                                    Err(error) if is_tool_loop_cancelled(&error) => Err(error),
                                     _ => Err(stream_err),
                                 }
                             } else {
@@ -2679,6 +2680,113 @@ mod streaming_fallback_tests {
         fn alias(&self) -> &str {
             "image-recovery-stream"
         }
+    }
+
+    struct RejectedStreamingImageThenPendingProvider {
+        stream_calls: AtomicUsize,
+        recovery_calls: AtomicUsize,
+        recovery_started: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl ModelProvider for RejectedStreamingImageThenPendingProvider {
+        fn supports_exact_request_replay(&self, _request: ChatRequest<'_>, _model: &str) -> bool {
+            true
+        }
+
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<String> {
+            unreachable!("structured chat is used")
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<ChatResponse> {
+            self.recovery_calls.fetch_add(1, Ordering::SeqCst);
+            self.recovery_started.notify_one();
+            std::future::pending().await
+        }
+
+        fn stream_chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+            _options: zeroclaw_providers::traits::StreamOptions,
+        ) -> BoxStream<'static, zeroclaw_providers::traits::StreamResult<StreamEvent>> {
+            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(futures_util::stream::iter(vec![Err(
+                zeroclaw_api::model_provider::StreamError::HttpStatus {
+                    status: 400,
+                    message: "request could not be processed".to_string(),
+                },
+            )]))
+        }
+    }
+
+    impl Attributable for RejectedStreamingImageThenPendingProvider {
+        fn role(&self) -> Role {
+            Role::Provider(ProviderKind::Model(ModelProviderKind::Custom))
+        }
+
+        fn alias(&self) -> &str {
+            "pending-streaming-image-recovery"
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_image_recovery_preserves_turn_cancellation() {
+        let provider = RejectedStreamingImageThenPendingProvider {
+            stream_calls: AtomicUsize::new(0),
+            recovery_calls: AtomicUsize::new(0),
+            recovery_started: tokio::sync::Notify::new(),
+        };
+        let observer = NoopObserver;
+        let pacing = PacingConfig::default();
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut ctx = recovery_test_ctx(&observer, &pacing);
+        ctx.cancellation_token = Some(&token);
+        let original = [ChatMessage::user("[IMAGE:data:image/png;base64,AAAA]")];
+        let recovery = [ChatMessage::user("[image removed]")];
+
+        let call = call_provider(
+            &ctx,
+            &provider,
+            "test-provider",
+            "test-model",
+            "test-model",
+            &original,
+            Some(&recovery),
+            None,
+            true,
+            0,
+        );
+        let cancel = async {
+            provider.recovery_started.notified().await;
+            token.cancel();
+        };
+        let (outcome, ()) =
+            tokio::time::timeout(Duration::from_secs(1), async { tokio::join!(call, cancel) })
+                .await
+                .expect("cancellation must terminate the pending streaming recovery");
+        let outcome = outcome.expect("provider call returns an outcome");
+
+        assert!(is_tool_loop_cancelled(&outcome.chat_result.unwrap_err()));
+        assert!(!outcome.image_recovery_succeeded);
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.recovery_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
